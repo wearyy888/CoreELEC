@@ -1,0 +1,119 @@
+From 7db2943eb6deb5afde4d87556bdfdb41d1c65ea8 Mon Sep 17 00:00:00 2001
+From: Portisch <hugo.portisch@yahoo.de>
+Date: Fri, 14 Apr 2023 08:39:30 +0200
+Subject: [PATCH 1/2] hdmitx: force DV RGB to 8bit, 422 to 12bit When display
+ do not support DV RGB 12bit limit to 8bit. Force 12bit on 422.
+
+---
+ .../vout/hdmitx/hdmi_tx_20/hdmi_tx_main.c     | 38 ++++++++++++++-----
+ .../amlogic/media/vout/hdmitx21/hdmi_param.c  | 26 +++++++++++--
+ 2 files changed, 50 insertions(+), 14 deletions(-)
+
+diff --git a/drivers/amlogic/media/vout/hdmitx/hdmi_tx_20/hdmi_tx_main.c b/drivers/amlogic/media/vout/hdmitx/hdmi_tx_20/hdmi_tx_main.c
+index 77a3f6033a94..c419ccf6547e 100644
+--- a/drivers/amlogic/media/vout/hdmitx/hdmi_tx_20/hdmi_tx_main.c
++++ b/drivers/amlogic/media/vout/hdmitx/hdmi_tx_20/hdmi_tx_main.c
+@@ -716,6 +716,7 @@ static int set_disp_mode_auto(void)
+ 		pr_info("hdmitx: display colourdepth forced by attr to %d bits (VIC: %d)\n", colour_depths[para->cd - COLORDEPTH_24B], vic);
+ 	} else {
+ 		// parse and set maximum colourdepth given by edid
++		const struct dv_info *dv_info = &hdev->rxcap.dv_info;
+ 		if (hdev->rxcap.ColorDeepSupport & 0x78 && hdev->para->cs != COLORSPACE_YUV420) {
+ 			enum hdmi_color_depth cd;
+ 			for (cd = COLORDEPTH_36B; cd >= COLORDEPTH_24B; cd--) {
+@@ -734,21 +735,38 @@ static int set_disp_mode_auto(void)
+ 		}
+ 
+ 		// check for colour subsampling limit
+-		switch (vic & 0xff) {
+-			case HDMI_3840x2160p50_16x9:
+-			case HDMI_3840x2160p60_16x9:
+-			case HDMI_4096x2160p50_256x135:
+-			case HDMI_4096x2160p60_256x135:
+-			case HDMI_3840x2160p50_64x27:
+-			case HDMI_3840x2160p60_64x27:
+-				if (para->cs == COLORSPACE_RGB444 || para->cs == COLORSPACE_YUV444)
+-				{
++		switch (hdev->hdmi_current_eotf_type) {
++			case EOTF_T_DOLBYVISION:
++				if ((dv_info->ver < 2 || dv_info->sup_10b_12b_444 != 0x01) &&
++						(para->cd != COLORDEPTH_24B)) {
+ 					para->cd = COLORDEPTH_24B;
+-					pr_info("hdmitx: forced colourdepth to %d bits because of current video information code\n", colour_depths[para->cd - COLORDEPTH_24B]);
++					pr_info("hdmitx: forced colourdepth to %d bits because of display DV sink capability\n", colour_depths[para->cd - COLORDEPTH_24B]);
++				}
++				break;
++			case EOTF_T_LL_MODE:
++				if (para->cd != COLORDEPTH_36B) {
++					para->cd = COLORDEPTH_36B;
++					pr_info("hdmitx: forced colourdepth to %d bits because of display DV sink capability\n", colour_depths[para->cd - COLORDEPTH_24B]);
+ 				}
+ 				break;
+ 			default:
++				switch (vic & 0xff) {
++					case HDMI_3840x2160p50_16x9:
++					case HDMI_3840x2160p60_16x9:
++					case HDMI_4096x2160p50_256x135:
++					case HDMI_4096x2160p60_256x135:
++					case HDMI_3840x2160p50_64x27:
++					case HDMI_3840x2160p60_64x27:
++						if (para->cs == COLORSPACE_RGB444 || para->cs == COLORSPACE_YUV444)
++						{
++							para->cd = COLORDEPTH_24B;
++							pr_info("hdmitx: forced colourdepth to %d bits because of current video information code\n", colour_depths[para->cd - COLORDEPTH_24B]);
++						}
++						break;
++					default:
++						break;
+ 				break;
++			}
+ 		}
+ 
+ 		pr_info("hdmitx: display colourdepth is auto set to %d bits (VIC: %d)\n", colour_depths[para->cd - COLORDEPTH_24B], vic);
+diff --git a/drivers/amlogic/media/vout/hdmitx21/hdmi_param.c b/drivers/amlogic/media/vout/hdmitx21/hdmi_param.c
+index e334c9eac7c2..5dcc6eec69be 100644
+--- a/drivers/amlogic/media/vout/hdmitx21/hdmi_param.c
++++ b/drivers/amlogic/media/vout/hdmitx21/hdmi_param.c
+@@ -82,6 +82,7 @@ static void _auto_setup_attr(char const *mode, char const *attr,
+ 			pr_info("hdmitx: display colourdepth forced by attr to %d bits (VIC: %d)\n", colour_depths[*cd - COLORDEPTH_24B], vic);
+ 		} else {
+ 			// parse and set maximum colourdepth given by edid
++			const struct dv_info *dv_info = &hdev->rxcap.dv_info;
+ 			*cd = COLORDEPTH_24B;
+ 			if (hdev->rxcap.ColorDeepSupport & 0x78 && *cs != HDMI_COLORSPACE_YUV420) {
+ 				enum hdmi_color_depth _cd;
+@@ -101,10 +102,27 @@ static void _auto_setup_attr(char const *mode, char const *attr,
+ 			}
+ 
+ 			// check for colour subsampling limit
+-			if (_is_y420_vic(vic) && *cd > COLORDEPTH_24B && (*cs == HDMI_COLORSPACE_RGB || *cs == HDMI_COLORSPACE_YUV444))
+-			{
+-				*cd = COLORDEPTH_24B;
+-				pr_info("hdmitx: forced colourdepth to %d bits because of current video information code\n", colour_depths[*cd - COLORDEPTH_24B]);
++			switch (hdev->hdmi_current_eotf_type) {
++				case EOTF_T_DOLBYVISION:
++					if ((dv_info->ver < 2 || dv_info->sup_10b_12b_444 != 0x01) &&
++					    (*cd != COLORDEPTH_24B)) {
++						*cd = COLORDEPTH_24B;
++						pr_info("hdmitx: forced colourdepth to %d bits because of display DV sink capability\n", colour_depths[*cd - COLORDEPTH_24B]);
++					}
++					break;
++				case EOTF_T_LL_MODE:
++					if (*cd != COLORDEPTH_36B) {
++						*cd = COLORDEPTH_36B;
++						pr_info("hdmitx: forced colourdepth to %d bits because of display DV sink capability\n", colour_depths[*cd - COLORDEPTH_24B]);
++					}
++					break;
++				default:
++					if (_is_y420_vic(vic) && *cd > COLORDEPTH_24B && (*cs == HDMI_COLORSPACE_RGB || *cs == HDMI_COLORSPACE_YUV444))
++					{
++						*cd = COLORDEPTH_24B;
++						pr_info("hdmitx: forced colourdepth to %d bits because of current video information code\n", colour_depths[*cd - COLORDEPTH_24B]);
++					}
++					break;
+ 			}
+ 
+ 			pr_info("hdmitx: display colourdepth is auto set to %d bits (VIC: %d)\n", colour_depths[*cd - COLORDEPTH_24B], vic);
+-- 
+2.39.1
+

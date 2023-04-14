@@ -1,0 +1,61 @@
+From 231225c1e642fda2ad077b7e9c8677ddc5ed882f Mon Sep 17 00:00:00 2001
+From: Portisch <hugo.portisch@yahoo.de>
+Date: Fri, 14 Apr 2023 09:54:08 +0200
+Subject: [PATCH 2/2] hdmitx: fix display of current hdmi config with colour
+ space 422
+
+---
+ .../media/vout/hdmitx/hdmi_tx_20/hdmi_tx_main.c        |  4 ----
+ drivers/amlogic/media/vout/hdmitx21/hdmi_tx_main.c     | 10 ++--------
+ 2 files changed, 2 insertions(+), 12 deletions(-)
+
+diff --git a/drivers/amlogic/media/vout/hdmitx/hdmi_tx_20/hdmi_tx_main.c b/drivers/amlogic/media/vout/hdmitx/hdmi_tx_20/hdmi_tx_main.c
+index c419ccf6547e..67acc77574ac 100644
+--- a/drivers/amlogic/media/vout/hdmitx/hdmi_tx_20/hdmi_tx_main.c
++++ b/drivers/amlogic/media/vout/hdmitx/hdmi_tx_20/hdmi_tx_main.c
+@@ -2756,10 +2756,6 @@ static ssize_t config_show(struct device *dev,
+ 		int cd = (hdmitx_rd_reg(HDMITX_DWC_TX_INVID0) & 0x6) >> 1;
+ 		para = hdev->para;
+ 
+-		// YUV422
+-		if (cs == 1)
+-			cd = (~cd & 0x3);
+-
+ 		if (hdmitx_hdr10p_en())
+ 			eotf = eotf_hdr10p[hdmitx_get_cur_hdr10p_st() & ~HDMI_HDR10P_TYPE];
+ 		else if (hdmitx_dv_en())
+diff --git a/drivers/amlogic/media/vout/hdmitx21/hdmi_tx_main.c b/drivers/amlogic/media/vout/hdmitx21/hdmi_tx_main.c
+index 00ef6ccbc892..8ae67de6db5b 100644
+--- a/drivers/amlogic/media/vout/hdmitx21/hdmi_tx_main.c
++++ b/drivers/amlogic/media/vout/hdmitx21/hdmi_tx_main.c
+@@ -2159,17 +2159,11 @@ static ssize_t config_show(struct device *dev,
+ 
+ 	if (hdev->para) {
+ 		struct hdmi_format_para *para = hdev->para;
+-		u8 color_depth = COLORDEPTH_24B; // Pixel bit width: 4=24-bit; 5=30-bit; 6=36-bit; 7=48-bit.
++		u8 color_depth = para->cd; // Pixel bit width: 4=24-bit; 5=30-bit; 6=36-bit; 7=48-bit.
+ 		u8 input_color_format = HDMI_COLORSPACE_YUV444;  // Pixel format: 0=RGB444; 1=YCbCr422; 2=YCbCr444; 3=YCbCr420.
+ 		u8 input_color_range = COLORRANGE_LIM;  // Pixel range: 0=limited; 1=full.
+ 		u8 output_color_format = HDMI_COLORSPACE_YUV444; // Pixel format: 0=RGB444; 1=YCbCr422; 2=YCbCr444; 3=YCbCr420.
+ 		u8 output_color_range = COLORRANGE_LIM; // Pixel range: 0=limited; 1=full.
+-		u8 dp_color_depth = 0;
+-
+-		color_depth = para->cd;
+-		output_color_format = para->cs;
+-		dp_color_depth = (output_color_format == HDMI_COLORSPACE_YUV422) ?
+-					COLORDEPTH_24B : color_depth;
+ 
+ 		if (hdmitx21_hdr10p_en())
+ 			eotf = eotf_hdr10p[hdmitx21_get_cur_hdr10p_st() & ~HDMI_HDR10P_TYPE];
+@@ -2181,7 +2175,7 @@ static ssize_t config_show(struct device *dev,
+ 		pos += snprintf(buf+pos, PAGE_SIZE, "VIC: %d %s\n",
+ 				hdev->cur_VIC, para->hdmitx_vinfo.name);
+ 		pos += snprintf(buf + pos, PAGE_SIZE, "Colour depth: %s-bit\nColourspace: %s\nColour range: %s\nEOTF: %s\nYCC colour range: %s\n",
+-				bpp[dp_color_depth & 0x3],
++				bpp[color_depth & 0x3],
+ 				pix_fmt[output_color_format & 0x3],
+ 				range[(input_color_format != output_color_format || input_color_range  != output_color_range) ? 1 : 0],
+ 				eotf,
+-- 
+2.39.1
+
